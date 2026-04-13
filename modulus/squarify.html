@@ -1,0 +1,728 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Squarify</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0c1117;
+      --panel: rgba(17, 24, 32, 0.82);
+      --panel-strong: rgba(17, 24, 32, 0.94);
+      --line: rgba(167, 206, 255, 0.18);
+      --text: #ebf3ff;
+      --muted: #8ea4bc;
+      --accent: #7cd2ff;
+      --accent-strong: #3da8ff;
+      --ok: #7af2b5;
+      --warn: #ffd37a;
+      --bad: #ff8a8a;
+      --shadow: 0 24px 80px rgba(0, 0, 0, 0.4);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(61, 168, 255, 0.2), transparent 28%),
+        radial-gradient(circle at bottom right, rgba(122, 242, 181, 0.14), transparent 24%),
+        linear-gradient(180deg, #091017 0%, var(--bg) 100%);
+    }
+
+    main {
+      width: min(960px, calc(100% - 32px));
+      margin: 32px auto 48px;
+    }
+
+    .hero,
+    .panel {
+      backdrop-filter: blur(18px);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: 28px;
+      margin-bottom: 20px;
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto -12% -50% auto;
+      width: 280px;
+      height: 280px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(124, 210, 255, 0.2) 0%, transparent 65%);
+      pointer-events: none;
+    }
+
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--accent);
+      font-size: 0.78rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-size: clamp(2.4rem, 8vw, 5rem);
+      line-height: 0.94;
+      letter-spacing: -0.04em;
+    }
+
+    .subtitle {
+      max-width: 56ch;
+      margin: 0;
+      color: var(--muted);
+      font-size: 1rem;
+      line-height: 1.6;
+    }
+
+    .panel {
+      padding: 22px;
+      margin-bottom: 16px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin: 18px 0 0;
+    }
+
+    button {
+      appearance: none;
+      border: 0;
+      border-radius: 999px;
+      padding: 0.95rem 1.3rem;
+      font: inherit;
+      font-weight: 700;
+      color: #071019;
+      background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+      cursor: pointer;
+      transition: transform 120ms ease, filter 120ms ease;
+    }
+
+    button:hover {
+      filter: brightness(1.08);
+      transform: translateY(-1px);
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: wait;
+      transform: none;
+      filter: none;
+    }
+
+    .dropzone {
+      margin-top: 18px;
+      padding: 28px;
+      border: 1px dashed rgba(124, 210, 255, 0.45);
+      border-radius: 20px;
+      background: linear-gradient(180deg, rgba(124, 210, 255, 0.06), rgba(124, 210, 255, 0.02));
+      text-align: center;
+      transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+    }
+
+    .dropzone.dragover {
+      border-color: var(--accent);
+      background: linear-gradient(180deg, rgba(124, 210, 255, 0.16), rgba(124, 210, 255, 0.08));
+      transform: translateY(-2px);
+    }
+
+    .dropzone strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 1.05rem;
+    }
+
+    .hint,
+    .meta {
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .meta {
+      margin-top: 10px;
+      font-size: 0.95rem;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 1.5rem;
+      margin-top: 14px;
+      font-weight: 600;
+    }
+
+    .status::before {
+      content: "";
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 0 6px color-mix(in srgb, currentColor 20%, transparent);
+    }
+
+    .status.idle { color: var(--muted); }
+    .status.ok { color: var(--ok); }
+    .status.warn { color: var(--warn); }
+    .status.bad { color: var(--bad); }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .stat {
+      padding: 14px;
+      border-radius: 18px;
+      border: 1px solid rgba(124, 210, 255, 0.1);
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .stat strong {
+      display: block;
+      font-size: 1.45rem;
+      line-height: 1;
+      margin-bottom: 6px;
+    }
+
+    .log {
+      margin: 0;
+      padding: 18px;
+      border-radius: 20px;
+      background: var(--panel-strong);
+      border: 1px solid rgba(124, 210, 255, 0.08);
+      color: #d6e8ff;
+      font: 0.92rem/1.5 Consolas, "SFMono-Regular", monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 360px;
+      overflow: auto;
+    }
+
+    code {
+      font-family: Consolas, "SFMono-Regular", monospace;
+      color: #d6e8ff;
+    }
+
+    @media (max-width: 640px) {
+      main {
+        width: min(960px, calc(100% - 20px));
+        margin-top: 20px;
+      }
+
+      .hero,
+      .panel {
+        border-radius: 20px;
+      }
+
+      .hero,
+      .panel,
+      .dropzone,
+      .log {
+        padding-left: 16px;
+        padding-right: 16px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <p class="eyebrow">Modulus Level Tool</p>
+      <h1>Squarify</h1>
+      <p class="subtitle">
+        Drop a Modulus level directory or your whole <code>Levels</code> folder here. This page finds the
+        correct <code>level.json</code>, applies the same ore-packing logic as <code>pack-ores.ts</code>, and
+        writes the patched file back into place.
+      </p>
+    </section>
+
+    <section class="panel">
+      <div class="actions">
+        <button id="pick-directory" type="button">Choose Directory</button>
+      </div>
+      <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Drop directory here">
+        <strong>Drop a directory here</strong>
+        <div class="hint">Best case: drop <code>Squarify</code>. Also works if you drop the parent <code>Levels</code> folder.</div>
+      </div>
+      <div id="status" class="status idle">Waiting for a directory.</div>
+      <div id="target-meta" class="meta">Target level hint: <code>Squarify</code></div>
+    </section>
+
+    <section class="panel">
+      <strong>Last run</strong>
+      <div id="summary" class="summary-grid"></div>
+    </section>
+
+    <section class="panel">
+      <strong>Log</strong>
+      <pre id="log" class="log">Ready.</pre>
+    </section>
+  </main>
+
+  <script>
+    const targetLevelName = (() => {
+      const fileName = decodeURIComponent(location.pathname.split("/").pop() || "squarify.html");
+      return fileName.replace(/\.html$/i, "").trim() || "Squarify";
+    })();
+
+    const statusEl = document.getElementById("status");
+    const summaryEl = document.getElementById("summary");
+    const logEl = document.getElementById("log");
+    const dropzoneEl = document.getElementById("dropzone");
+    const pickButtonEl = document.getElementById("pick-directory");
+    const targetMetaEl = document.getElementById("target-meta");
+
+    targetMetaEl.innerHTML = `Target level hint: <code>${escapeHtml(targetLevelName)}</code>`;
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    function setStatus(kind, message) {
+      statusEl.className = `status ${kind}`;
+      statusEl.textContent = message;
+    }
+
+    function setSummary(stats) {
+      if (!stats) {
+        summaryEl.innerHTML = "";
+        return;
+      }
+
+      const entries = [
+        ["Path", stats.targetPath],
+        ["Clusters", stats.clusters],
+        ["Groups", stats.groups],
+        ["Decorative", stats.decorativeGroups],
+        ["Packed", stats.packGroups],
+        ["Moved", stats.moved],
+      ];
+
+      summaryEl.innerHTML = entries
+        .map(([label, value]) => `
+          <div class="stat">
+            <div class="hint">${escapeHtml(label)}</div>
+            <strong>${escapeHtml(value)}</strong>
+          </div>
+        `)
+        .join("");
+    }
+
+    function setLog(lines) {
+      logEl.textContent = Array.isArray(lines) ? lines.join("\n") : String(lines);
+    }
+
+    function getZ(point) {
+      return point.z ?? 0;
+    }
+
+    const DECORATIVE_SIG = [4, 4, 8, 20, 20, 32];
+
+    function dist(a, b) {
+      const dx = a.x - b.x;
+      const dz = getZ(a) - getZ(b);
+      return Math.sqrt(dx * dx + dz * dz);
+    }
+
+    function groupSignature(group) {
+      const dists = [];
+      for (let i = 0; i < group.length; i += 1) {
+        for (let j = i + 1; j < group.length; j += 1) {
+          const dx = group[i].x - group[j].x;
+          const dz = getZ(group[i]) - getZ(group[j]);
+          dists.push(dx * dx + dz * dz);
+        }
+      }
+      return dists.sort((a, b) => a - b);
+    }
+
+    function isDecorative(group) {
+      const signature = groupSignature(group);
+      return signature.every((value, index) => value === DECORATIVE_SIG[index]);
+    }
+
+    function centroid(rocks) {
+      return {
+        x: rocks.reduce((sum, point) => sum + point.x, 0) / rocks.length,
+        z: rocks.reduce((sum, point) => sum + getZ(point), 0) / rocks.length,
+      };
+    }
+
+    function clusterAll(rocks, maxDist) {
+      const visited = new Set();
+      const clusters = [];
+
+      for (let i = 0; i < rocks.length; i += 1) {
+        if (visited.has(i)) {
+          continue;
+        }
+
+        const group = [i];
+        const queue = [i];
+        visited.add(i);
+
+        while (queue.length) {
+          const current = queue.shift();
+
+          for (let j = 0; j < rocks.length; j += 1) {
+            if (visited.has(j)) {
+              continue;
+            }
+
+            if (dist(rocks[current], rocks[j]) <= maxDist) {
+              visited.add(j);
+              group.push(j);
+              queue.push(j);
+            }
+          }
+        }
+
+        clusters.push(group.map((index) => rocks[index]));
+      }
+
+      return clusters;
+    }
+
+    function groupsOf4(rocks, warnings) {
+      const remaining = [...rocks];
+      const groups = [];
+
+      while (remaining.length >= 4) {
+        const center = centroid(remaining);
+        remaining.sort((a, b) => dist(b, center) - dist(a, center));
+        const seed = remaining.shift();
+        remaining.sort((a, b) => dist(seed, a) - dist(seed, b));
+        groups.push([seed, ...remaining.splice(0, 3)]);
+      }
+
+      if (remaining.length) {
+        warnings.push(`Warning: ${remaining.length} leftover rocks in cluster`);
+      }
+
+      return groups;
+    }
+
+    function runSquarify(levelJson) {
+      const terrain = levelJson?.TerrainLayer?.SavedObjectDtos;
+      if (!Array.isArray(terrain)) {
+        throw new Error("level.json does not contain TerrainLayer.SavedObjectDtos.");
+      }
+
+      const polyrocks = terrain.filter((entry) => entry && entry.i === 4);
+      const warnings = [];
+      const clusters = clusterAll(polyrocks, 6);
+      const allGroups = clusters.flatMap((cluster) => groupsOf4(cluster, warnings));
+      const decorativeGroups = allGroups.filter(isDecorative);
+      const packGroups = allGroups.filter((group) => !isDecorative(group));
+
+      const occupied = new Set();
+
+      function canPlace(topLeftX, topLeftZ) {
+        return [[0, 0], [1, 0], [0, 1], [1, 1]]
+          .every(([dx, dz]) => !occupied.has(`${topLeftX + dx},${topLeftZ + dz}`));
+      }
+
+      function findPlace(centerX, centerZ) {
+        const baseTopLeftX = Math.round(centerX - 0.5);
+        const baseTopLeftZ = Math.round(centerZ - 0.5);
+
+        for (let radius = 0; radius <= 20; radius += 1) {
+          for (let dx = -radius; dx <= radius; dx += 1) {
+            for (let dz = -radius; dz <= radius; dz += 1) {
+              if (Math.abs(dx) !== radius && Math.abs(dz) !== radius) {
+                continue;
+              }
+
+              if (canPlace(baseTopLeftX + dx, baseTopLeftZ + dz)) {
+                return [baseTopLeftX + dx, baseTopLeftZ + dz];
+              }
+            }
+          }
+        }
+
+        throw new Error(`No placement found near (${centerX.toFixed(1)}, ${centerZ.toFixed(1)})`);
+      }
+
+      const assignments = [];
+
+      for (const group of packGroups) {
+        const center = centroid(group);
+        const [topLeftX, topLeftZ] = findPlace(center.x, center.z);
+        const offsets = [[0, 0], [1, 0], [0, 1], [1, 1]];
+
+        group.forEach((rock, index) => {
+          const [dx, dz] = offsets[index];
+          const newX = topLeftX + dx;
+          const newZ = topLeftZ + dz;
+          occupied.add(`${newX},${newZ}`);
+          assignments.push({ rock, newX, newZ });
+        });
+      }
+
+      let moved = 0;
+      for (const { rock, newX, newZ } of assignments) {
+        if (rock.x !== newX || getZ(rock) !== newZ) {
+          moved += 1;
+        }
+        rock.x = newX;
+        if (newZ === 0) {
+          delete rock.z;
+        } else {
+          rock.z = newZ;
+        }
+      }
+
+      return {
+        json: levelJson,
+        stats: {
+          clusters: clusters.length,
+          groups: allGroups.length,
+          decorativeGroups: decorativeGroups.length,
+          packGroups: packGroups.length,
+          moved,
+        },
+        warnings,
+      };
+    }
+
+    async function ensureReadWritePermission(handle) {
+      if (!handle.queryPermission || !handle.requestPermission) {
+        return;
+      }
+
+      const options = { mode: "readwrite" };
+      if (await handle.queryPermission(options) === "granted") {
+        return;
+      }
+
+      if (await handle.requestPermission(options) !== "granted") {
+        throw new Error("Read/write access was not granted.");
+      }
+    }
+
+    async function findLevelJsonCandidates(directoryHandle, path = [], out = []) {
+      const currentPath = [...path, directoryHandle.name];
+
+      try {
+        const directLevelJson = await directoryHandle.getFileHandle("level.json");
+        out.push({
+          path: [...currentPath, "level.json"],
+          fileHandle: directLevelJson,
+          directoryHandle,
+        });
+      } catch (error) {
+        if (error?.name !== "NotFoundError") {
+          throw error;
+        }
+      }
+
+      for await (const entry of directoryHandle.values()) {
+        if (entry.kind === "directory") {
+          await findLevelJsonCandidates(entry, currentPath, out);
+        }
+      }
+
+      return out;
+    }
+
+    function chooseBestCandidate(candidates) {
+      if (!candidates.length) {
+        return null;
+      }
+
+      const targetLower = targetLevelName.toLowerCase();
+      const withScore = candidates.map((candidate) => {
+        const segments = candidate.path.map((segment) => segment.toLowerCase());
+        const directLevelDir = segments[segments.length - 2] ?? "";
+        let score = 0;
+
+        if (directLevelDir === targetLower) {
+          score += 100;
+        }
+        if (segments.includes(targetLower)) {
+          score += 20;
+        }
+        if (segments.length <= 3) {
+          score += 10;
+        }
+
+        return { candidate, score };
+      });
+
+      withScore.sort((a, b) => b.score - a.score || a.candidate.path.length - b.candidate.path.length);
+
+      const [best, second] = withScore;
+      if (!second || best.score > second.score) {
+        return best.candidate;
+      }
+
+      return null;
+    }
+
+    async function resolveLevelTarget(handle) {
+      if (!handle) {
+        throw new Error("No file system handle was provided.");
+      }
+
+      if (handle.kind === "file") {
+        if (handle.name.toLowerCase() !== "level.json") {
+          throw new Error("Drop a level directory or a level.json file.");
+        }
+
+        return {
+          fileHandle: handle,
+          path: [handle.name],
+        };
+      }
+
+      if (handle.kind !== "directory") {
+        throw new Error("Unsupported file system item.");
+      }
+
+      const candidates = await findLevelJsonCandidates(handle, []);
+      const chosen = chooseBestCandidate(candidates);
+
+      if (!chosen) {
+        if (!candidates.length) {
+          throw new Error(`No level.json found under ${handle.name}.`);
+        }
+
+        const list = candidates.map((candidate) => candidate.path.join("/")).join(", ");
+        throw new Error(`Multiple level.json files found and no clear ${targetLevelName} match exists: ${list}`);
+      }
+
+      return {
+        fileHandle: chosen.fileHandle,
+        path: chosen.path,
+      };
+    }
+
+    async function patchHandle(handle) {
+      setStatus("idle", "Scanning directory...");
+      setSummary(null);
+      setLog("Scanning for level.json...");
+      pickButtonEl.disabled = true;
+
+      try {
+        const target = await resolveLevelTarget(handle);
+        await ensureReadWritePermission(target.fileHandle);
+        const file = await target.fileHandle.getFile();
+        const sourceText = await file.text();
+        const levelJson = JSON.parse(sourceText);
+        const result = runSquarify(levelJson);
+        const outputText = JSON.stringify(result.json);
+        const writable = await target.fileHandle.createWritable();
+        await writable.write(outputText);
+        await writable.close();
+
+        const logLines = [
+          `Patched ${target.path.join("/")}`,
+          `Clusters: ${result.stats.clusters}`,
+          `Groups: ${result.stats.groups}`,
+          `Decorative groups skipped: ${result.stats.decorativeGroups}`,
+          `Packed groups: ${result.stats.packGroups}`,
+          `Moved rocks: ${result.stats.moved}`,
+          ...result.warnings,
+          "Saved level.json",
+        ];
+
+        setSummary({
+          ...result.stats,
+          targetPath: target.path.join("/"),
+        });
+        setLog(logLines);
+        setStatus("ok", `Patched ${target.path.join("/")}`);
+      } catch (error) {
+        console.error(error);
+        setStatus("bad", error?.message || String(error));
+        setLog(error?.stack || String(error));
+      } finally {
+        pickButtonEl.disabled = false;
+      }
+    }
+
+    async function getHandleFromDrop(event) {
+      const items = [...(event.dataTransfer?.items ?? [])];
+      for (const item of items) {
+        if (typeof item.getAsFileSystemHandle === "function") {
+          const handle = await item.getAsFileSystemHandle();
+          if (handle) {
+            return handle;
+          }
+        }
+      }
+      throw new Error("This browser drop event did not expose writable directory handles. Use Choose Directory in Chromium.");
+    }
+
+    pickButtonEl.addEventListener("click", async () => {
+      if (typeof window.showDirectoryPicker !== "function") {
+        setStatus("bad", "showDirectoryPicker is not available in this browser.");
+        setLog("Use a Chromium browser with the File System Access API.");
+        return;
+      }
+
+      try {
+        const handle = await window.showDirectoryPicker({ mode: "readwrite" });
+        await patchHandle(handle);
+      } catch (error) {
+        if (error?.name === "AbortError") {
+          setStatus("warn", "Directory selection was canceled.");
+          return;
+        }
+
+        setStatus("bad", error?.message || String(error));
+        setLog(error?.stack || String(error));
+      }
+    });
+
+    ["dragenter", "dragover"].forEach((type) => {
+      dropzoneEl.addEventListener(type, (event) => {
+        event.preventDefault();
+        dropzoneEl.classList.add("dragover");
+      });
+    });
+
+    ["dragleave", "dragend", "drop"].forEach((type) => {
+      dropzoneEl.addEventListener(type, () => {
+        dropzoneEl.classList.remove("dragover");
+      });
+    });
+
+    dropzoneEl.addEventListener("drop", async (event) => {
+      event.preventDefault();
+      try {
+        const handle = await getHandleFromDrop(event);
+        await patchHandle(handle);
+      } catch (error) {
+        setStatus("bad", error?.message || String(error));
+        setLog(error?.stack || String(error));
+      }
+    });
+  </script>
+</body>
+</html>
