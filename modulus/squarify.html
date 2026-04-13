@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Squarify</title>
+  <title>Pack Ores</title>
   <style>
     :root {
       color-scheme: dark;
@@ -205,6 +205,106 @@
       margin-bottom: 6px;
     }
 
+    .results {
+      display: grid;
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .result-row {
+      padding: 16px;
+      border-radius: 18px;
+      border: 1px solid rgba(124, 210, 255, 0.12);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .result-head,
+    .result-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 14px;
+      align-items: center;
+    }
+
+    .result-head {
+      justify-content: space-between;
+    }
+
+    .result-path {
+      font: 0.95rem/1.4 Consolas, "SFMono-Regular", monospace;
+      color: #d6e8ff;
+      word-break: break-word;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 0 12px;
+      border-radius: 999px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      border: 1px solid transparent;
+    }
+
+    .badge.already-patched,
+    .badge.patched-now {
+      color: var(--ok);
+      border-color: rgba(122, 242, 181, 0.3);
+      background: rgba(122, 242, 181, 0.08);
+    }
+
+    .badge.needs-patch {
+      color: var(--warn);
+      border-color: rgba(255, 211, 122, 0.28);
+      background: rgba(255, 211, 122, 0.08);
+    }
+
+    .badge.error {
+      color: var(--bad);
+      border-color: rgba(255, 138, 138, 0.28);
+      background: rgba(255, 138, 138, 0.08);
+    }
+
+    .badge.busy {
+      color: var(--accent);
+      border-color: rgba(124, 210, 255, 0.3);
+      background: rgba(124, 210, 255, 0.08);
+    }
+
+    .result-stats {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .result-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-top: 12px;
+    }
+
+    .row-button {
+      padding: 0.7rem 1rem;
+      font-size: 0.92rem;
+    }
+
+    .result-note {
+      color: var(--muted);
+      font-size: 0.92rem;
+      line-height: 1.5;
+    }
+
+    .warning-list {
+      margin-top: 10px;
+      color: var(--warn);
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+
     .log {
       margin: 0;
       padding: 18px;
@@ -249,11 +349,12 @@
   <main>
     <section class="hero">
       <p class="eyebrow">Modulus Level Tool</p>
-      <h1>Squarify</h1>
+      <h1>Pack Ores</h1>
       <p class="subtitle">
-        Drop a Modulus level directory or your whole <code>Levels</code> folder here. This page finds the
-        correct <code>level.json</code>, applies the same ore-packing logic as <code>pack-ores.ts</code>, and
-        writes the patched file back into place.
+        Drop a save directory or the whole <code>Levels</code> folder here. The scanner checks
+        <code>&lt;dir&gt;/level.json</code> and <code>&lt;dir&gt;/*/level.json</code>, shows which saves already
+        match the packed layout, and lets you patch only the ones that still need it. Every patch writes
+        <code>level.before-squarify.json</code> first.
       </p>
     </section>
 
@@ -263,15 +364,16 @@
       </div>
       <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Drop directory here">
         <strong>Drop a directory here</strong>
-        <div class="hint">Best case: drop <code>Squarify</code>. Also works if you drop the parent <code>Levels</code> folder.</div>
+        <div class="hint">Works with a single save directory or the parent <code>Levels</code> folder.</div>
       </div>
       <div id="status" class="status idle">Waiting for a directory.</div>
-      <div id="target-meta" class="meta">Target level hint: <code>Squarify</code></div>
+      <div id="target-meta" class="meta">Scan rule: <code>&lt;dir&gt;/level.json</code> and <code>&lt;dir&gt;/*/level.json</code>. Patch writes <code>level.before-squarify.json</code>.</div>
     </section>
 
     <section class="panel">
-      <strong>Last run</strong>
+      <strong>Scan Results</strong>
       <div id="summary" class="summary-grid"></div>
+      <div id="results" class="results"></div>
     </section>
 
     <section class="panel">
@@ -281,19 +383,16 @@
   </main>
 
   <script>
-    const targetLevelName = (() => {
-      const fileName = decodeURIComponent(location.pathname.split("/").pop() || "squarify.html");
-      return fileName.replace(/\.html$/i, "").trim() || "Squarify";
-    })();
-
     const statusEl = document.getElementById("status");
     const summaryEl = document.getElementById("summary");
+    const resultsEl = document.getElementById("results");
     const logEl = document.getElementById("log");
     const dropzoneEl = document.getElementById("dropzone");
     const pickButtonEl = document.getElementById("pick-directory");
-    const targetMetaEl = document.getElementById("target-meta");
-
-    targetMetaEl.innerHTML = `Target level hint: <code>${escapeHtml(targetLevelName)}</code>`;
+    const state = {
+      entries: [],
+      logLines: ["Ready."],
+    };
 
     function escapeHtml(value) {
       return String(value)
@@ -308,22 +407,13 @@
       statusEl.textContent = message;
     }
 
-    function setSummary(stats) {
-      if (!stats) {
+    function setSummary(cards) {
+      if (!cards?.length) {
         summaryEl.innerHTML = "";
         return;
       }
 
-      const entries = [
-        ["Path", stats.targetPath],
-        ["Clusters", stats.clusters],
-        ["Groups", stats.groups],
-        ["Decorative", stats.decorativeGroups],
-        ["Packed", stats.packGroups],
-        ["Moved", stats.moved],
-      ];
-
-      summaryEl.innerHTML = entries
+      summaryEl.innerHTML = cards
         .map(([label, value]) => `
           <div class="stat">
             <div class="hint">${escapeHtml(label)}</div>
@@ -333,8 +423,76 @@
         .join("");
     }
 
+    function renderResults() {
+      if (!state.entries.length) {
+        resultsEl.innerHTML = `<div class="result-note">No scan results yet.</div>`;
+        return;
+      }
+
+      resultsEl.innerHTML = state.entries.map((entry, index) => {
+        const badgeClass = entry.busy ? "busy" : entry.status;
+        const badgeLabel = entry.busy
+          ? "Patching..."
+          : entry.status === "already-patched"
+            ? "Already patched"
+            : entry.status === "patched-now"
+              ? "Patched"
+              : entry.status === "needs-patch"
+                ? "Needs patch"
+                : "Error";
+
+        const stats = entry.stats
+          ? [
+              `Clusters ${entry.stats.clusters}`,
+              `Groups ${entry.stats.groups}`,
+              `Decorative ${entry.stats.decorativeGroups}`,
+              `Packed ${entry.stats.packGroups}`,
+              `Moved ${entry.stats.moved}`,
+            ].join("  |  ")
+          : "";
+
+        const action = entry.status === "needs-patch" || entry.busy
+          ? `<button class="row-button" data-patch-index="${index}" ${entry.busy ? "disabled" : ""}>Patch</button>`
+          : `<span class="result-note">${entry.status === "error" ? "Fix the file and rescan." : "No patch needed."}</span>`;
+
+        const details = entry.error
+          ? `<div class="result-note">${escapeHtml(entry.error)}</div>`
+          : `<div class="result-stats">${escapeHtml(stats)}</div>`;
+
+        const warnings = entry.warnings?.length
+          ? `<div class="warning-list">${entry.warnings.map((warning) => escapeHtml(warning)).join("<br>")}</div>`
+          : "";
+
+        return `
+          <div class="result-row">
+            <div class="result-head">
+              <div class="result-path">${escapeHtml(entry.path.join("/"))}</div>
+              <span class="badge ${badgeClass}">${escapeHtml(badgeLabel)}</span>
+            </div>
+            ${details}
+            ${warnings}
+            <div class="result-actions">${action}</div>
+          </div>
+        `;
+      }).join("");
+
+      for (const button of resultsEl.querySelectorAll("[data-patch-index]")) {
+        button.addEventListener("click", () => {
+          const index = Number(button.getAttribute("data-patch-index"));
+          void patchEntry(index);
+        });
+      }
+    }
+
     function setLog(lines) {
-      logEl.textContent = Array.isArray(lines) ? lines.join("\n") : String(lines);
+      state.logLines = Array.isArray(lines) ? lines : [String(lines)];
+      logEl.textContent = state.logLines.join("\n");
+    }
+
+    function appendLog(lines) {
+      const additions = Array.isArray(lines) ? lines : [String(lines)];
+      state.logLines = [...additions, "", ...state.logLines].filter(Boolean);
+      logEl.textContent = state.logLines.join("\n");
     }
 
     function getZ(point) {
@@ -525,66 +683,24 @@
       }
     }
 
-    async function findLevelJsonCandidates(directoryHandle, path = [], out = []) {
-      const currentPath = [...path, directoryHandle.name];
+    async function addLevelJsonIfPresent(directoryHandle, path, out, seen) {
+      const pathKey = [...path, "level.json"].join("/");
+      if (seen.has(pathKey)) {
+        return;
+      }
 
       try {
-        const directLevelJson = await directoryHandle.getFileHandle("level.json");
-        out.push({
-          path: [...currentPath, "level.json"],
-          fileHandle: directLevelJson,
-          directoryHandle,
-        });
+        const fileHandle = await directoryHandle.getFileHandle("level.json");
+        out.push({ fileHandle, directoryHandle, path: [...path, "level.json"] });
+        seen.add(pathKey);
       } catch (error) {
         if (error?.name !== "NotFoundError") {
           throw error;
         }
       }
-
-      for await (const entry of directoryHandle.values()) {
-        if (entry.kind === "directory") {
-          await findLevelJsonCandidates(entry, currentPath, out);
-        }
-      }
-
-      return out;
     }
 
-    function chooseBestCandidate(candidates) {
-      if (!candidates.length) {
-        return null;
-      }
-
-      const targetLower = targetLevelName.toLowerCase();
-      const withScore = candidates.map((candidate) => {
-        const segments = candidate.path.map((segment) => segment.toLowerCase());
-        const directLevelDir = segments[segments.length - 2] ?? "";
-        let score = 0;
-
-        if (directLevelDir === targetLower) {
-          score += 100;
-        }
-        if (segments.includes(targetLower)) {
-          score += 20;
-        }
-        if (segments.length <= 3) {
-          score += 10;
-        }
-
-        return { candidate, score };
-      });
-
-      withScore.sort((a, b) => b.score - a.score || a.candidate.path.length - b.candidate.path.length);
-
-      const [best, second] = withScore;
-      if (!second || best.score > second.score) {
-        return best.candidate;
-      }
-
-      return null;
-    }
-
-    async function resolveLevelTarget(handle) {
+    async function findLevelJsonCandidates(handle) {
       if (!handle) {
         throw new Error("No file system handle was provided.");
       }
@@ -595,8 +711,7 @@
         }
 
         return {
-          fileHandle: handle,
-          path: [handle.name],
+          candidates: [{ fileHandle: handle, path: [handle.name] }],
         };
       }
 
@@ -604,65 +719,177 @@
         throw new Error("Unsupported file system item.");
       }
 
-      const candidates = await findLevelJsonCandidates(handle, []);
-      const chosen = chooseBestCandidate(candidates);
+      const candidates = [];
+      const seen = new Set();
+      const rootPath = [handle.name];
+      await addLevelJsonIfPresent(handle, rootPath, candidates, seen);
 
-      if (!chosen) {
-        if (!candidates.length) {
-          throw new Error(`No level.json found under ${handle.name}.`);
+      for await (const child of handle.values()) {
+        if (child.kind !== "directory") {
+          continue;
         }
 
-        const list = candidates.map((candidate) => candidate.path.join("/")).join(", ");
-        throw new Error(`Multiple level.json files found and no clear ${targetLevelName} match exists: ${list}`);
+        const childPath = [...rootPath, child.name];
+        await addLevelJsonIfPresent(child, childPath, candidates, seen);
+
+        for await (const grandchild of child.values()) {
+          if (grandchild.kind !== "directory") {
+            continue;
+          }
+
+          await addLevelJsonIfPresent(grandchild, [...childPath, grandchild.name], candidates, seen);
+        }
       }
 
-      return {
-        fileHandle: chosen.fileHandle,
-        path: chosen.path,
-      };
+      return { candidates };
     }
 
-    async function patchHandle(handle) {
+    async function analyzeCandidate(candidate) {
+      try {
+        const file = await candidate.fileHandle.getFile();
+        const sourceText = await file.text();
+        const sourceJson = JSON.parse(sourceText);
+        const workingJson = JSON.parse(JSON.stringify(sourceJson));
+        const result = runSquarify(workingJson);
+        const normalizedSourceText = JSON.stringify(sourceJson);
+        const outputText = JSON.stringify(result.json);
+        const needsPatch = outputText !== normalizedSourceText;
+
+        return {
+          ...candidate,
+          status: needsPatch ? "needs-patch" : "already-patched",
+          stats: result.stats,
+          warnings: result.warnings,
+          sourceText,
+          outputText,
+        };
+      } catch (error) {
+        return {
+          ...candidate,
+          status: "error",
+          error: error?.message || String(error),
+          warnings: [],
+        };
+      }
+    }
+
+    function renderScanSummary(entries) {
+      const scanned = entries.length;
+      const alreadyPatched = entries.filter((entry) => entry.status === "already-patched").length;
+      const patchedNow = entries.filter((entry) => entry.status === "patched-now").length;
+      const needsPatch = entries.filter((entry) => entry.status === "needs-patch").length;
+      const errors = entries.filter((entry) => entry.status === "error").length;
+      const busy = entries.filter((entry) => entry.busy).length;
+
+      setSummary([
+        ["Found", scanned],
+        ["Already patched", alreadyPatched],
+        ["Needs patch", needsPatch],
+        ["Errors", errors],
+        ["Patched now", patchedNow],
+        ["Busy", busy],
+      ]);
+    }
+
+    async function scanHandle(handle) {
       setStatus("idle", "Scanning directory...");
       setSummary(null);
-      setLog("Scanning for level.json...");
+      state.entries = [];
+      renderResults();
+      setLog("Scanning for level.json candidates...");
       pickButtonEl.disabled = true;
 
       try {
-        const target = await resolveLevelTarget(handle);
-        await ensureReadWritePermission(target.fileHandle);
-        const file = await target.fileHandle.getFile();
-        const sourceText = await file.text();
-        const levelJson = JSON.parse(sourceText);
-        const result = runSquarify(levelJson);
-        const outputText = JSON.stringify(result.json);
-        const writable = await target.fileHandle.createWritable();
-        await writable.write(outputText);
-        await writable.close();
+        const { candidates } = await findLevelJsonCandidates(handle);
+        if (!candidates.length) {
+          throw new Error(`No level.json files found using <dir>/level.json and <dir>/*/level.json under ${handle.name}.`);
+        }
 
-        const logLines = [
-          `Patched ${target.path.join("/")}`,
-          `Clusters: ${result.stats.clusters}`,
-          `Groups: ${result.stats.groups}`,
-          `Decorative groups skipped: ${result.stats.decorativeGroups}`,
-          `Packed groups: ${result.stats.packGroups}`,
-          `Moved rocks: ${result.stats.moved}`,
-          ...result.warnings,
-          "Saved level.json",
-        ];
+        state.entries = await Promise.all(candidates.map(analyzeCandidate));
+        renderScanSummary(state.entries);
+        renderResults();
 
-        setSummary({
-          ...result.stats,
-          targetPath: target.path.join("/"),
-        });
-        setLog(logLines);
-        setStatus("ok", `Patched ${target.path.join("/")}`);
+        const needsPatch = state.entries.filter((entry) => entry.status === "needs-patch").length;
+        const alreadyPatched = state.entries.filter((entry) => entry.status === "already-patched").length;
+        const errors = state.entries.filter((entry) => entry.status === "error").length;
+
+        setLog([
+          `Scanned ${candidates.length} level.json file(s).`,
+          `${alreadyPatched} already patched.`,
+          `${needsPatch} need patching.`,
+          `${errors} produced errors.`,
+          ...state.entries.map((entry) => `${entry.status.toUpperCase()}: ${entry.path.join("/")}`),
+        ]);
+
+        if (needsPatch) {
+          setStatus("warn", `${needsPatch} file(s) need patching.`);
+        } else if (errors) {
+          setStatus("bad", `${errors} file(s) could not be analyzed.`);
+        } else {
+          setStatus("ok", `All ${alreadyPatched} file(s) are already patched.`);
+        }
       } catch (error) {
         console.error(error);
         setStatus("bad", error?.message || String(error));
         setLog(error?.stack || String(error));
       } finally {
         pickButtonEl.disabled = false;
+      }
+    }
+
+    async function patchEntry(index) {
+      const entry = state.entries[index];
+      if (!entry || entry.status !== "needs-patch") {
+        return;
+      }
+
+      entry.busy = true;
+      renderResults();
+      setStatus("idle", `Patching ${entry.path.join("/")}...`);
+
+      try {
+        if (!entry.directoryHandle) {
+          throw new Error("Patch requires a directory handle. Choose or drop a directory, not a single file.");
+        }
+
+        await ensureReadWritePermission(entry.directoryHandle);
+        await ensureReadWritePermission(entry.fileHandle);
+
+        const backupHandle = await entry.directoryHandle.getFileHandle("level.before-squarify.json", { create: true });
+        const backupWritable = await backupHandle.createWritable();
+        await backupWritable.write(entry.sourceText);
+        await backupWritable.close();
+
+        const writable = await entry.fileHandle.createWritable();
+        await writable.write(entry.outputText);
+        await writable.close();
+        entry.status = "patched-now";
+        entry.busy = false;
+        entry.error = "";
+        entry.sourceText = entry.outputText;
+        renderScanSummary(state.entries);
+        renderResults();
+        appendLog([
+          `Patched ${entry.path.join("/")}`,
+          "Saved level.before-squarify.json",
+          `Moved rocks: ${entry.stats?.moved ?? "?"}`,
+          "Saved level.json",
+        ]);
+
+        const remaining = state.entries.filter((candidate) => candidate.status === "needs-patch").length;
+        if (remaining) {
+          setStatus("warn", `${remaining} file(s) still need patching.`);
+        } else {
+          setStatus("ok", "All scanned files are patched.");
+        }
+      } catch (error) {
+        entry.busy = false;
+        entry.status = "error";
+        entry.error = error?.message || String(error);
+        renderScanSummary(state.entries);
+        renderResults();
+        setStatus("bad", `Failed to patch ${entry.path.join("/")}.`);
+        appendLog(error?.stack || String(error));
       }
     }
 
@@ -688,7 +915,7 @@
 
       try {
         const handle = await window.showDirectoryPicker({ mode: "readwrite" });
-        await patchHandle(handle);
+        await scanHandle(handle);
       } catch (error) {
         if (error?.name === "AbortError") {
           setStatus("warn", "Directory selection was canceled.");
@@ -717,12 +944,14 @@
       event.preventDefault();
       try {
         const handle = await getHandleFromDrop(event);
-        await patchHandle(handle);
+        await scanHandle(handle);
       } catch (error) {
         setStatus("bad", error?.message || String(error));
         setLog(error?.stack || String(error));
       }
     });
+
+    renderResults();
   </script>
 </body>
 </html>
