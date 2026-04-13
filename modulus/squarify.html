@@ -605,6 +605,41 @@
       return groups;
     }
 
+    function findSquareGroups(rocks) {
+      const byPos = new Map();
+      const used = new Set();
+      const getKey = (x, z) => `${x},${z}`;
+
+      for (const rock of rocks) {
+        byPos.set(getKey(rock.x, getZ(rock)), rock);
+      }
+
+      const topLefts = [...byPos.keys()]
+        .map((key) => key.split(",").map(Number))
+        .sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+
+      const squareGroups = [];
+
+      for (const [x, z] of topLefts) {
+        const cells = [
+          getKey(x, z),
+          getKey(x + 1, z),
+          getKey(x, z + 1),
+          getKey(x + 1, z + 1),
+        ];
+
+        if (cells.every((cell) => byPos.has(cell) && !used.has(cell))) {
+          cells.forEach((cell) => used.add(cell));
+          squareGroups.push(cells.map((cell) => byPos.get(cell)));
+        }
+      }
+
+      return {
+        squareGroups,
+        squareRockSet: new Set(squareGroups.flat()),
+      };
+    }
+
     function runSquarify(levelJson) {
       const terrain = levelJson?.TerrainLayer?.SavedObjectDtos;
       if (!Array.isArray(terrain)) {
@@ -613,12 +648,20 @@
 
       const polyrocks = terrain.filter((entry) => entry && entry.i === 4);
       const warnings = [];
-      const clusters = clusterAll(polyrocks, 6);
+      const totalClusters = clusterAll(polyrocks, 6);
+      const { squareGroups: existingSquareGroups, squareRockSet } = findSquareGroups(polyrocks);
+      const remainingRocks = polyrocks.filter((rock) => !squareRockSet.has(rock));
+      const clusters = clusterAll(remainingRocks, 6);
       const allGroups = clusters.flatMap((cluster) => groupsOf4(cluster, warnings));
       const decorativeGroups = allGroups.filter(isDecorative);
       const packGroups = allGroups.filter((group) => !isDecorative(group));
 
       const occupied = new Set();
+      for (const group of existingSquareGroups) {
+        for (const rock of group) {
+          occupied.add(`${rock.x},${getZ(rock)}`);
+        }
+      }
 
       function canPlace(topLeftX, topLeftZ) {
         return [[0, 0], [1, 0], [0, 1], [1, 1]]
@@ -690,11 +733,11 @@
       return {
         json: levelJson,
         stats: {
-          clusters: clusters.length,
-          groups: allGroups.length,
+          clusters: totalClusters.length,
+          groups: allGroups.length + existingSquareGroups.length,
           decorativeGroups: decorativeGroups.length,
-          packGroups: packGroups.length,
-          squareGroups,
+          packGroups: existingSquareGroups.length + packGroups.length,
+          squareGroups: squareGroups.length,
           groupsNeedingPatch,
           moved,
         },
@@ -785,9 +828,8 @@
         const sourceJson = JSON.parse(sourceText);
         const workingJson = JSON.parse(JSON.stringify(sourceJson));
         const result = runSquarify(workingJson);
-        const normalizedSourceText = JSON.stringify(sourceJson);
         const outputText = JSON.stringify(result.json);
-        const needsPatch = outputText !== normalizedSourceText;
+        const needsPatch = result.stats.groupsNeedingPatch > 0;
         let backupModifiedLabel = "";
 
         if (candidate.directoryHandle) {
