@@ -447,9 +447,16 @@
               `Groups ${entry.stats.groups}`,
               `Decorative ${entry.stats.decorativeGroups}`,
               `Packed ${entry.stats.packGroups}`,
+              `Square ${entry.stats.squareGroups}`,
+              `Need move ${entry.stats.groupsNeedingPatch}`,
               `Moved ${entry.stats.moved}`,
             ].join("  |  ")
           : "";
+
+        const dates = [
+          entry.fileModifiedLabel ? `level.json ${entry.fileModifiedLabel}` : "",
+          entry.backupModifiedLabel ? `backup ${entry.backupModifiedLabel}` : "backup missing",
+        ].filter(Boolean).join("  |  ");
 
         const action = entry.status === "needs-patch" || entry.busy
           ? `<button class="row-button" data-patch-index="${index}" ${entry.busy ? "disabled" : ""}>Patch</button>`
@@ -457,7 +464,7 @@
 
         const details = entry.error
           ? `<div class="result-note">${escapeHtml(entry.error)}</div>`
-          : `<div class="result-stats">${escapeHtml(stats)}</div>`;
+          : `<div class="result-stats">${escapeHtml(stats)}</div><div class="result-stats">${escapeHtml(dates)}</div>`;
 
         const warnings = entry.warnings?.length
           ? `<div class="warning-list">${entry.warnings.map((warning) => escapeHtml(warning)).join("<br>")}</div>`
@@ -493,6 +500,19 @@
       const additions = Array.isArray(lines) ? lines : [String(lines)];
       state.logLines = [...additions, "", ...state.logLines].filter(Boolean);
       logEl.textContent = state.logLines.join("\n");
+    }
+
+    function formatDate(value) {
+      if (!value) {
+        return "";
+      }
+
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) {
+        return "";
+      }
+
+      return date.toLocaleString();
     }
 
     function getZ(point) {
@@ -627,19 +647,31 @@
       }
 
       const assignments = [];
+      let squareGroups = 0;
+      let groupsNeedingPatch = 0;
 
       for (const group of packGroups) {
         const center = centroid(group);
         const [topLeftX, topLeftZ] = findPlace(center.x, center.z);
         const offsets = [[0, 0], [1, 0], [0, 1], [1, 1]];
+        let groupMoved = 0;
 
         group.forEach((rock, index) => {
           const [dx, dz] = offsets[index];
           const newX = topLeftX + dx;
           const newZ = topLeftZ + dz;
+          if (rock.x !== newX || getZ(rock) !== newZ) {
+            groupMoved += 1;
+          }
           occupied.add(`${newX},${newZ}`);
           assignments.push({ rock, newX, newZ });
         });
+
+        if (groupMoved === 0) {
+          squareGroups += 1;
+        } else {
+          groupsNeedingPatch += 1;
+        }
       }
 
       let moved = 0;
@@ -662,6 +694,8 @@
           groups: allGroups.length,
           decorativeGroups: decorativeGroups.length,
           packGroups: packGroups.length,
+          squareGroups,
+          groupsNeedingPatch,
           moved,
         },
         warnings,
@@ -754,12 +788,27 @@
         const normalizedSourceText = JSON.stringify(sourceJson);
         const outputText = JSON.stringify(result.json);
         const needsPatch = outputText !== normalizedSourceText;
+        let backupModifiedLabel = "";
+
+        if (candidate.directoryHandle) {
+          try {
+            const backupHandle = await candidate.directoryHandle.getFileHandle("level.before-squarify.json");
+            const backupFile = await backupHandle.getFile();
+            backupModifiedLabel = formatDate(backupFile.lastModified);
+          } catch (error) {
+            if (error?.name !== "NotFoundError") {
+              throw error;
+            }
+          }
+        }
 
         return {
           ...candidate,
           status: needsPatch ? "needs-patch" : "already-patched",
           stats: result.stats,
           warnings: result.warnings,
+          fileModifiedLabel: formatDate(file.lastModified),
+          backupModifiedLabel,
           sourceText,
           outputText,
         };
@@ -867,6 +916,8 @@
         entry.busy = false;
         entry.error = "";
         entry.sourceText = entry.outputText;
+        entry.backupModifiedLabel = formatDate(Date.now());
+        entry.fileModifiedLabel = formatDate(Date.now());
         renderScanSummary(state.entries);
         renderResults();
         appendLog([
