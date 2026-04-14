@@ -353,7 +353,7 @@
       <p class="subtitle">
         Drop a save directory or the whole <code>Levels</code> folder here. The scanner checks
         <code>&lt;dir&gt;/level.json</code> and <code>&lt;dir&gt;/*/level.json</code>, shows which saves already
-        match the packed layout, and lets you patch only the ones that still need it. Every patch writes
+        match the packed layout, and lets you patch them into 2x2 or 4x8 layouts. Every patch writes
         <code>level.before-squarify.json</code> first.
       </p>
     </section>
@@ -367,7 +367,7 @@
         <div class="hint">Works with a single save directory or the parent <code>Levels</code> folder.</div>
       </div>
       <div id="status" class="status idle">Waiting for a directory.</div>
-      <div id="target-meta" class="meta">Scan rule: <code>&lt;dir&gt;/level.json</code> and <code>&lt;dir&gt;/*/level.json</code>. Patch writes <code>level.before-squarify.json</code>.</div>
+      <div id="target-meta" class="meta">Scan rule: <code>&lt;dir&gt;/level.json</code> and <code>&lt;dir&gt;/*/level.json</code>. Patch and 4x8 patch both write <code>level.before-squarify.json</code>.</div>
     </section>
 
     <section class="panel">
@@ -432,24 +432,31 @@
       resultsEl.innerHTML = state.entries.map((entry, index) => {
         const badgeClass = entry.busy ? "busy" : entry.status;
         const badgeLabel = entry.busy
-          ? "Patching..."
-          : entry.status === "already-patched"
-            ? "Already patched"
-            : entry.status === "patched-now"
-              ? "Patched"
-              : entry.status === "needs-patch"
-                ? "Needs patch"
-                : "Error";
+          ? entry.busyMode === "rectangle"
+            ? "Patching 4x8..."
+            : entry.busyMode === "restore"
+              ? "Restoring..."
+            : "Patching..."
+          : entry.status === "patched-now"
+            ? "Patched"
+            : entry.status === "error"
+              ? "Error"
+              : entry.needsSquarePatch
+                ? "Needs 2x2"
+                : entry.needsRectPatch
+                  ? "Needs 4x8"
+                  : "Already patched";
 
         const stats = entry.stats
           ? [
               `Clusters ${entry.stats.clusters}`,
               `Groups ${entry.stats.groups}`,
               `Decorative ${entry.stats.decorativeGroups}`,
-              `Packed ${entry.stats.packGroups}`,
-              `Square ${entry.stats.squareGroups}`,
-              `Need move ${entry.stats.groupsNeedingPatch}`,
-              `Moved ${entry.stats.moved}`,
+              `2x2 ${entry.stats.packGroups}`,
+              `2x2 ready ${entry.stats.squareGroups}`,
+              `Need 2x2 ${entry.stats.groupsNeedingPatch}`,
+              `4x8 ${entry.rectStats?.rectGroups ?? 0}`,
+              `Need 4x8 ${entry.rectStats?.rectGroupsNeedingPatch ?? 0}`,
             ].join("  |  ")
           : "";
 
@@ -458,8 +465,21 @@
           entry.backupModifiedLabel ? `backup ${entry.backupModifiedLabel}` : "backup missing",
         ].filter(Boolean).join("  |  ");
 
-        const action = entry.status === "needs-patch" || entry.busy
-          ? `<button class="row-button" data-patch-index="${index}" ${entry.busy ? "disabled" : ""}>Patch</button>`
+        const actions = [];
+        if (entry.status !== "error") {
+          if (entry.needsSquarePatch || entry.busy) {
+            actions.push(`<button class="row-button" data-patch-index="${index}" ${entry.busy ? "disabled" : ""}>Patch</button>`);
+          }
+          if (entry.needsRectPatch || entry.busy) {
+            actions.push(`<button class="row-button" data-rect-patch-index="${index}" ${entry.busy ? "disabled" : ""}>Patch 4x8</button>`);
+          }
+        }
+        if ((entry.backupModifiedLabel && entry.directoryHandle) || entry.busy) {
+          actions.push(`<button class="row-button" data-restore-index="${index}" ${entry.busy ? "disabled" : ""}>Restore Backup</button>`);
+        }
+
+        const action = actions.length
+          ? actions.join("")
           : `<span class="result-note">${entry.status === "error" ? "Fix the file and rescan." : "No patch needed."}</span>`;
 
         const details = entry.error
@@ -487,6 +507,20 @@
         button.addEventListener("click", () => {
           const index = Number(button.getAttribute("data-patch-index"));
           void patchEntry(index);
+        });
+      }
+
+      for (const button of resultsEl.querySelectorAll("[data-rect-patch-index]")) {
+        button.addEventListener("click", () => {
+          const index = Number(button.getAttribute("data-rect-patch-index"));
+          void patchEntry(index, "rectangle");
+        });
+      }
+
+      for (const button of resultsEl.querySelectorAll("[data-restore-index]")) {
+        button.addEventListener("click", () => {
+          const index = Number(button.getAttribute("data-restore-index"));
+          void restoreEntry(index);
         });
       }
     }
@@ -549,6 +583,15 @@
         x: rocks.reduce((sum, point) => sum + point.x, 0) / rocks.length,
         z: rocks.reduce((sum, point) => sum + getZ(point), 0) / rocks.length,
       };
+    }
+
+    function setRockPosition(rock, x, z) {
+      rock.x = x;
+      if (z === 0) {
+        delete rock.z;
+      } else {
+        rock.z = z;
+      }
     }
 
     function clusterAll(rocks, maxDist) {
@@ -640,6 +683,123 @@
       };
     }
 
+    function findRectangleGroups(rocks) {
+      const byPos = new Map();
+      const used = new Set();
+      const getKey = (x, z) => `${x},${z}`;
+      const horizontalOffsets = [[0, 0], [1, 0], [2, 0], [3, 0], [0, 1], [1, 1], [2, 1], [3, 1]];
+      const verticalOffsets = [[0, 0], [1, 0], [0, 1], [1, 1], [0, 2], [1, 2], [0, 3], [1, 3]];
+
+      for (const rock of rocks) {
+        byPos.set(getKey(rock.x, getZ(rock)), rock);
+      }
+
+      const topLefts = [...byPos.keys()]
+        .map((key) => key.split(",").map(Number))
+        .sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+
+      const rectGroups = [];
+
+      for (const [x, z] of topLefts) {
+        const variants = [horizontalOffsets, verticalOffsets];
+        for (const offsets of variants) {
+          const cells = offsets.map(([dx, dz]) => getKey(x + dx, z + dz));
+          if (cells.every((cell) => byPos.has(cell) && !used.has(cell))) {
+            cells.forEach((cell) => used.add(cell));
+            rectGroups.push(cells.map((cell) => byPos.get(cell)));
+            break;
+          }
+        }
+      }
+
+      return {
+        rectGroups,
+        rectRockSet: new Set(rectGroups.flat()),
+      };
+    }
+
+    function canPlaceOffsets(topLeftX, topLeftZ, offsets, occupied) {
+      return offsets.every(([dx, dz]) => !occupied.has(`${topLeftX + dx},${topLeftZ + dz}`));
+    }
+
+    function findPlaceNear(centerX, centerZ, variants, occupied, scorePlacement = null) {
+      const bases = variants.map((variant) => ({
+        ...variant,
+        baseTopLeftX: Math.round(centerX - variant.anchorX),
+        baseTopLeftZ: Math.round(centerZ - variant.anchorZ),
+      }));
+
+      for (let radius = 0; radius <= 20; radius += 1) {
+        let best = null;
+
+        for (const variant of bases) {
+          for (let dx = -radius; dx <= radius; dx += 1) {
+            for (let dz = -radius; dz <= radius; dz += 1) {
+              if (Math.abs(dx) !== radius && Math.abs(dz) !== radius) {
+                continue;
+              }
+
+              const topLeftX = variant.baseTopLeftX + dx;
+              const topLeftZ = variant.baseTopLeftZ + dz;
+              if (!canPlaceOffsets(topLeftX, topLeftZ, variant.offsets, occupied)) {
+                continue;
+              }
+
+              const score = scorePlacement ? scorePlacement(topLeftX, topLeftZ, variant) : 0;
+              const tieBreak = Math.abs(dx) + Math.abs(dz);
+              if (!best || score < best.score || (score === best.score && tieBreak < best.tieBreak)) {
+                best = { topLeftX, topLeftZ, variant, score, tieBreak };
+              }
+            }
+          }
+        }
+
+        if (best) {
+          return best;
+        }
+      }
+
+      throw new Error(`No placement found near (${centerX.toFixed(1)}, ${centerZ.toFixed(1)})`);
+    }
+
+    function pairSquareGroups(squareGroups, warnings) {
+      const remaining = [...squareGroups];
+      const pairs = [];
+
+      function areCentersCloseEnough(a, b) {
+        const centerA = centroid(a);
+        const centerB = centroid(b);
+        const dx = Math.abs(centerA.x - centerB.x);
+        const dz = Math.abs(centerA.z - centerB.z);
+        const shortAxis = Math.min(dx, dz);
+        const longAxis = Math.max(dx, dz);
+        return shortAxis <= 3 && longAxis <= 4;
+      }
+
+      while (remaining.length >= 2) {
+        const center = centroid(remaining.flat());
+        remaining.sort((a, b) => dist(centroid(b), center) - dist(centroid(a), center));
+        const seed = remaining.shift();
+        const seedCenter = centroid(seed);
+        remaining.sort((a, b) => dist(seedCenter, centroid(a)) - dist(seedCenter, centroid(b)));
+        const matchIndex = remaining.findIndex((group) => areCentersCloseEnough(seed, group));
+        if (matchIndex === -1) {
+          continue;
+        }
+
+        pairs.push([seed, remaining.splice(matchIndex, 1)[0]]);
+      }
+
+      if (remaining.length) {
+        warnings.push(`Warning: ${remaining.length} leftover 2x2 group not close enough for 4x8`);
+      }
+
+      return {
+        pairs,
+        leftoverGroups: remaining,
+      };
+    }
+
     function runSquarify(levelJson) {
       const terrain = levelJson?.TerrainLayer?.SavedObjectDtos;
       if (!Array.isArray(terrain)) {
@@ -663,39 +823,18 @@
         }
       }
 
-      function canPlace(topLeftX, topLeftZ) {
-        return [[0, 0], [1, 0], [0, 1], [1, 1]]
-          .every(([dx, dz]) => !occupied.has(`${topLeftX + dx},${topLeftZ + dz}`));
-      }
-
-      function findPlace(centerX, centerZ) {
-        const baseTopLeftX = Math.round(centerX - 0.5);
-        const baseTopLeftZ = Math.round(centerZ - 0.5);
-
-        for (let radius = 0; radius <= 20; radius += 1) {
-          for (let dx = -radius; dx <= radius; dx += 1) {
-            for (let dz = -radius; dz <= radius; dz += 1) {
-              if (Math.abs(dx) !== radius && Math.abs(dz) !== radius) {
-                continue;
-              }
-
-              if (canPlace(baseTopLeftX + dx, baseTopLeftZ + dz)) {
-                return [baseTopLeftX + dx, baseTopLeftZ + dz];
-              }
-            }
-          }
-        }
-
-        throw new Error(`No placement found near (${centerX.toFixed(1)}, ${centerZ.toFixed(1)})`);
-      }
-
       const assignments = [];
-      let squareGroups = 0;
+      let squareGroups = existingSquareGroups.length;
       let groupsNeedingPatch = 0;
 
       for (const group of packGroups) {
         const center = centroid(group);
-        const [topLeftX, topLeftZ] = findPlace(center.x, center.z);
+        const { topLeftX, topLeftZ } = findPlaceNear(
+          center.x,
+          center.z,
+          [{ offsets: [[0, 0], [1, 0], [0, 1], [1, 1]], anchorX: 0.5, anchorZ: 0.5 }],
+          occupied,
+        );
         const offsets = [[0, 0], [1, 0], [0, 1], [1, 1]];
         let groupMoved = 0;
 
@@ -722,12 +861,7 @@
         if (rock.x !== newX || getZ(rock) !== newZ) {
           moved += 1;
         }
-        rock.x = newX;
-        if (newZ === 0) {
-          delete rock.z;
-        } else {
-          rock.z = newZ;
-        }
+        setRockPosition(rock, newX, newZ);
       }
 
       return {
@@ -737,9 +871,112 @@
           groups: allGroups.length + existingSquareGroups.length,
           decorativeGroups: decorativeGroups.length,
           packGroups: existingSquareGroups.length + packGroups.length,
-          squareGroups: squareGroups.length,
+          squareGroups,
           groupsNeedingPatch,
           moved,
+        },
+        warnings,
+      };
+    }
+
+    function runRectanglify(levelJson) {
+      const baseResult = runSquarify(levelJson);
+      const terrain = levelJson?.TerrainLayer?.SavedObjectDtos;
+      const polyrocks = terrain.filter((entry) => entry && entry.i === 4);
+      const warnings = [...baseResult.warnings];
+      const { rectGroups: existingRectGroups, rectRockSet } = findRectangleGroups(polyrocks);
+      const remainingRocks = polyrocks.filter((rock) => !rectRockSet.has(rock));
+      const { squareGroups } = findSquareGroups(remainingRocks);
+      const { pairs: squarePairs } = pairSquareGroups(squareGroups, warnings);
+      const movingRocks = new Set(squarePairs.flat(2));
+      const occupied = new Set();
+
+      for (const rock of polyrocks) {
+        if (!movingRocks.has(rock)) {
+          occupied.add(`${rock.x},${getZ(rock)}`);
+        }
+      }
+
+      const variants = [
+        {
+          name: "horizontal",
+          anchorX: 1.5,
+          anchorZ: 0.5,
+          offsets: [[0, 0], [1, 0], [0, 1], [1, 1], [2, 0], [3, 0], [2, 1], [3, 1]],
+          segmentCenters: [{ x: 0.5, z: 0.5 }, { x: 2.5, z: 0.5 }],
+          segmentOffsets: [
+            [[0, 0], [1, 0], [0, 1], [1, 1]],
+            [[2, 0], [3, 0], [2, 1], [3, 1]],
+          ],
+          sortGroups: (a, b) => centroid(a).x - centroid(b).x || centroid(a).z - centroid(b).z,
+        },
+        {
+          name: "vertical",
+          anchorX: 0.5,
+          anchorZ: 1.5,
+          offsets: [[0, 0], [1, 0], [0, 1], [1, 1], [0, 2], [1, 2], [0, 3], [1, 3]],
+          segmentCenters: [{ x: 0.5, z: 0.5 }, { x: 0.5, z: 2.5 }],
+          segmentOffsets: [
+            [[0, 0], [1, 0], [0, 1], [1, 1]],
+            [[0, 2], [1, 2], [0, 3], [1, 3]],
+          ],
+          sortGroups: (a, b) => centroid(a).z - centroid(b).z || centroid(a).x - centroid(b).x,
+        },
+      ];
+
+      const assignments = [];
+      let rectGroupsNeedingPatch = 0;
+      let moved = baseResult.stats.moved;
+
+      for (const pair of squarePairs) {
+        const center = centroid(pair.flat());
+        const placement = findPlaceNear(center.x, center.z, variants, occupied, (topLeftX, topLeftZ, variant) => {
+          const orderedGroups = [...pair].sort(variant.sortGroups);
+          return orderedGroups.reduce((sum, group, index) => {
+            const targetCenter = {
+              x: topLeftX + variant.segmentCenters[index].x,
+              z: topLeftZ + variant.segmentCenters[index].z,
+            };
+            return sum + dist(centroid(group), targetCenter);
+          }, 0);
+        });
+
+        const orderedGroups = [...pair].sort(placement.variant.sortGroups);
+        let pairMoved = 0;
+
+        orderedGroups.forEach((group, groupIndex) => {
+          const targetOffsets = placement.variant.segmentOffsets[groupIndex];
+          group.forEach((rock, rockIndex) => {
+            const [dx, dz] = targetOffsets[rockIndex];
+            const newX = placement.topLeftX + dx;
+            const newZ = placement.topLeftZ + dz;
+            if (rock.x !== newX || getZ(rock) !== newZ) {
+              pairMoved += 1;
+            }
+            occupied.add(`${newX},${newZ}`);
+            assignments.push({ rock, newX, newZ });
+          });
+        });
+
+        if (pairMoved > 0) {
+          rectGroupsNeedingPatch += 1;
+          moved += pairMoved;
+        }
+      }
+
+      for (const { rock, newX, newZ } of assignments) {
+        setRockPosition(rock, newX, newZ);
+      }
+
+      return {
+        json: levelJson,
+        stats: {
+          ...baseResult.stats,
+          moved,
+          baseGroupsNeedingPatch: baseResult.stats.groupsNeedingPatch,
+          existingRectGroups: existingRectGroups.length,
+          rectGroups: existingRectGroups.length + squarePairs.length,
+          rectGroupsNeedingPatch,
         },
         warnings,
       };
@@ -826,10 +1063,14 @@
         const file = await candidate.fileHandle.getFile();
         const sourceText = await file.text();
         const sourceJson = JSON.parse(sourceText);
-        const workingJson = JSON.parse(JSON.stringify(sourceJson));
-        const result = runSquarify(workingJson);
+        const squarifyJson = JSON.parse(JSON.stringify(sourceJson));
+        const rectanglifyJson = JSON.parse(JSON.stringify(sourceJson));
+        const result = runSquarify(squarifyJson);
+        const rectResult = runRectanglify(rectanglifyJson);
         const outputText = JSON.stringify(result.json);
-        const needsPatch = result.stats.groupsNeedingPatch > 0;
+        const rectOutputText = JSON.stringify(rectResult.json);
+        const needsSquarePatch = result.stats.groupsNeedingPatch > 0;
+        const needsRectPatch = rectResult.stats.rectGroupsNeedingPatch > 0;
         let backupModifiedLabel = "";
 
         if (candidate.directoryHandle) {
@@ -846,13 +1087,17 @@
 
         return {
           ...candidate,
-          status: needsPatch ? "needs-patch" : "already-patched",
+          status: needsSquarePatch || needsRectPatch ? "needs-patch" : "already-patched",
+          needsSquarePatch,
+          needsRectPatch,
           stats: result.stats,
-          warnings: result.warnings,
+          rectStats: rectResult.stats,
+          warnings: [...new Set([...result.warnings, ...rectResult.warnings])],
           fileModifiedLabel: formatDate(file.lastModified),
           backupModifiedLabel,
           sourceText,
           outputText,
+          rectOutputText,
         };
       } catch (error) {
         return {
@@ -928,15 +1173,17 @@
       }
     }
 
-    async function patchEntry(index) {
+    async function patchEntry(index, mode = "square") {
       const entry = state.entries[index];
-      if (!entry || entry.status !== "needs-patch") {
+      const needsPatch = mode === "rectangle" ? entry?.needsRectPatch : entry?.needsSquarePatch;
+      if (!entry || !needsPatch || entry.status === "error") {
         return;
       }
 
       entry.busy = true;
+      entry.busyMode = mode;
       renderResults();
-      setStatus("idle", `Patching ${entry.path.join("/")}...`);
+      setStatus("idle", `${mode === "rectangle" ? "Patching 4x8" : "Patching"} ${entry.path.join("/")}...`);
 
       try {
         if (!entry.directoryHandle) {
@@ -952,20 +1199,25 @@
         await backupWritable.close();
 
         const writable = await entry.fileHandle.createWritable();
-        await writable.write(entry.outputText);
+        await writable.write(mode === "rectangle" ? entry.rectOutputText : entry.outputText);
         await writable.close();
-        entry.status = "patched-now";
-        entry.busy = false;
-        entry.error = "";
-        entry.sourceText = entry.outputText;
-        entry.backupModifiedLabel = formatDate(Date.now());
-        entry.fileModifiedLabel = formatDate(Date.now());
+        const refreshed = await analyzeCandidate(entry);
+        if (refreshed.status === "error") {
+          throw new Error(refreshed.error || "Re-analysis failed after writing level.json.");
+        }
+        state.entries[index] = {
+          ...refreshed,
+          status: refreshed.status === "already-patched" ? "patched-now" : refreshed.status,
+          busy: false,
+          busyMode: "",
+          error: "",
+        };
         renderScanSummary(state.entries);
         renderResults();
         appendLog([
-          `Patched ${entry.path.join("/")}`,
+          `${mode === "rectangle" ? "Patched 4x8" : "Patched"} ${entry.path.join("/")}`,
           "Saved level.before-squarify.json",
-          `Moved rocks: ${entry.stats?.moved ?? "?"}`,
+          `Moved rocks: ${mode === "rectangle" ? state.entries[index].rectStats?.moved ?? "?" : state.entries[index].stats?.moved ?? "?"}`,
           "Saved level.json",
         ]);
 
@@ -977,11 +1229,75 @@
         }
       } catch (error) {
         entry.busy = false;
+        entry.busyMode = "";
         entry.status = "error";
         entry.error = error?.message || String(error);
         renderScanSummary(state.entries);
         renderResults();
         setStatus("bad", `Failed to patch ${entry.path.join("/")}.`);
+        appendLog(error?.stack || String(error));
+      }
+    }
+
+    async function restoreEntry(index) {
+      const entry = state.entries[index];
+      if (!entry || !entry.directoryHandle || !entry.backupModifiedLabel) {
+        return;
+      }
+
+      entry.busy = true;
+      entry.busyMode = "restore";
+      renderResults();
+      setStatus("idle", `Restoring backup for ${entry.path.join("/")}...`);
+
+      try {
+        await ensureReadWritePermission(entry.directoryHandle);
+        await ensureReadWritePermission(entry.fileHandle);
+
+        const backupHandle = await entry.directoryHandle.getFileHandle("level.before-squarify.json");
+        const backupFile = await backupHandle.getFile();
+        const backupText = await backupFile.text();
+
+        const writable = await entry.fileHandle.createWritable();
+        await writable.write(backupText);
+        await writable.close();
+
+        const refreshed = await analyzeCandidate(entry);
+        if (refreshed.status === "error") {
+          throw new Error(refreshed.error || "Re-analysis failed after restoring level.json.");
+        }
+
+        state.entries[index] = {
+          ...refreshed,
+          busy: false,
+          busyMode: "",
+          error: "",
+        };
+        renderScanSummary(state.entries);
+        renderResults();
+        appendLog([
+          `Restored backup for ${entry.path.join("/")}`,
+          "Loaded level.before-squarify.json",
+          "Saved level.json",
+        ]);
+
+        const remaining = state.entries.filter((candidate) => candidate.status === "needs-patch").length;
+        const errors = state.entries.filter((candidate) => candidate.status === "error").length;
+        if (remaining) {
+          setStatus("warn", `${remaining} file(s) still need patching.`);
+        } else if (errors) {
+          setStatus("bad", `${errors} file(s) could not be analyzed.`);
+        } else {
+          setStatus("ok", "Restore complete.");
+        }
+      } catch (error) {
+        entry.busy = false;
+        entry.busyMode = "";
+        entry.status = "error";
+        entry.error = error?.message || String(error);
+        renderScanSummary(state.entries);
+        renderResults();
+        setStatus("bad", `Failed to restore ${entry.path.join("/")}.`);
         appendLog(error?.stack || String(error));
       }
     }
